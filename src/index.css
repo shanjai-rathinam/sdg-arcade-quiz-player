@@ -1,0 +1,81 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --un-blue: #0091b9;
+  --un-primary: #00adef;
+  --un-dark: #212529;
+  --un-body-text: #3b3b3b;
+  --un-light-bg: #ffffff;
+  --un-card-bg: #f8f9fa;
+  --un-border: #e9ecef;
+  --font-family-sans: "Roboto", "Oswald", sans-serif;
+}
+
+@layer base {
+  body {
+    font-family: var(--font-family-sans);
+    @apply antialiased selection:bg-unblue selection:text-white transition-colors duration-300;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: "Oswald", "Roboto", sans-serif;
+  }
+}
+
+/* Official UN Design System Glassmorphic Panels */
+.glass-panel {
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.light {
+  background-color: var(--un-light-bg);
+  color: var(--un-dark);
+}
+
+.light .glass-panel {
+  background: #ffffff;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-color: var(--un-border);
+  box-shadow: 0 4px 16px -2px rgba(33, 37, 41, 0.08);
+}
+
+/* UN Brand Accent Glow */
+.arcade-glow {
+  box-shadow: 0 0 25px -5px rgba(0, 145, 185, 0.4);
+}
+
+.arcade-glow-gold {
+  box-shadow: 0 0 30px -5px rgba(252, 195, 11, 0.5);
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.6);
+}
+
+.light ::-webkit-scrollbar-track {
+  background: #f8f9fa;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(51, 65, 85, 0.8);
+  border-radius: 9999px;
+}
+
+.light ::-webkit-scrollbar-thumb {
+  background: #ced4da;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #0091b9;
+}
