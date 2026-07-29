@@ -1,9 +1,9 @@
 import Peer, { type DataConnection } from 'peerjs';
 import type { SyncPayload } from '../types/game';
 
-const CHANNEL_NAME = 'sdg_arcade_quiz_global_v12';
-const LOCAL_STORAGE_KEY = 'sdg_arcade_quiz_global_event_v12';
-const HOST_PEER_ID = 'sdg_arcade_quiz_global_host_v12';
+const CHANNEL_NAME = 'sdg_arcade_quiz_global_v13';
+const LOCAL_STORAGE_KEY = 'sdg_arcade_quiz_global_event_v13';
+const HOST_PEER_ID = 'sdg_arcade_quiz_global_host_v13';
 
 class SyncService {
   private channel: BroadcastChannel | null = null;
@@ -122,7 +122,8 @@ class SyncService {
             this.setConnectedState(true);
 
             try {
-              conn.send({ event: 'HOST_HEARTBEAT', senderId: this.clientId, timestamp: Date.now() });
+              const msg = JSON.stringify({ event: 'HOST_HEARTBEAT', senderId: this.clientId, timestamp: Date.now() });
+              conn.send(msg);
             } catch (e) {}
           });
 
@@ -183,7 +184,8 @@ class SyncService {
         this.lastRemotePeerSeenTime = Date.now();
         this.setConnectedState(true);
         try {
-          conn.send({ event: 'REQUEST_STATE', senderId: this.clientId, timestamp: Date.now() });
+          const msg = JSON.stringify({ event: 'REQUEST_STATE', senderId: this.clientId, timestamp: Date.now() });
+          conn.send(msg);
         } catch (e) {}
       });
 
@@ -221,22 +223,30 @@ class SyncService {
   private evaluatePresence() {
     if (this.isHost) {
       const hasOpenConnection = Array.from(this.connections.values()).some(conn => conn.open);
-      const isRemoteSeenRecently = this.lastRemotePeerSeenTime > 0 && (Date.now() - this.lastRemotePeerSeenTime) < 6000;
+      const isRemoteSeenRecently = this.lastRemotePeerSeenTime > 0 && (Date.now() - this.lastRemotePeerSeenTime) < 8000;
       this.setConnectedState(hasOpenConnection || isRemoteSeenRecently);
     } else {
       const hasHostConn = !!(this.hostConn && this.hostConn.open);
-      const isHostSeenRecently = this.lastRemotePeerSeenTime > 0 && (Date.now() - this.lastRemotePeerSeenTime) < 6000;
+      const isHostSeenRecently = this.lastRemotePeerSeenTime > 0 && (Date.now() - this.lastRemotePeerSeenTime) < 8000;
       this.setConnectedState(hasHostConn || isHostSeenRecently);
     }
   }
 
   private handleRawData(data: unknown) {
     try {
-      const payload: SyncPayload = typeof data === 'string' ? JSON.parse(data) : (data as SyncPayload);
+      let payload: SyncPayload | null = null;
+      if (typeof data === 'string') {
+        payload = JSON.parse(data);
+      } else if (data && typeof data === 'object') {
+        payload = data as SyncPayload;
+      }
+
       if (payload && payload.event && payload.senderId !== this.clientId) {
         this.handleIncomingPayload(payload);
       }
-    } catch (e) {}
+    } catch (e) {
+      console.error('[SyncService] Parse data error:', e);
+    }
   }
 
   private handleIncomingPayload(payload: SyncPayload) {
@@ -257,26 +267,27 @@ class SyncService {
     };
 
     this.lastProcessedTimestamp = fullPayload.timestamp;
+    const jsonString = JSON.stringify(fullPayload);
 
     // 1. BroadcastChannel (Same Device / Dual Monitor)
     if (this.channel) {
       try { this.channel.postMessage(fullPayload); } catch (e) {}
     }
 
-    // 2. WebRTC P2P DataChannels (Cross Device)
+    // 2. WebRTC P2P DataChannels (Cross Device String Payload)
     if (this.isHost) {
       this.connections.forEach((conn) => {
         if (conn.open) {
-          try { conn.send(fullPayload); } catch (e) {}
+          try { conn.send(jsonString); } catch (e) {}
         }
       });
     } else if (this.hostConn && this.hostConn.open) {
-      try { this.hostConn.send(fullPayload); } catch (e) {}
+      try { this.hostConn.send(jsonString); } catch (e) {}
     }
 
     // 3. LocalStorage
     try {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(fullPayload));
+      localStorage.setItem(LOCAL_STORAGE_KEY, jsonString);
     } catch (e) {}
   }
 
