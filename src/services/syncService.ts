@@ -1,21 +1,18 @@
 import Peer, { type DataConnection } from 'peerjs';
 import type { SyncPayload } from '../types/game';
 
-const CHANNEL_NAME = 'sdg_arcade_quiz_global_v9';
-const LOCAL_STORAGE_KEY = 'sdg_arcade_quiz_global_event_v9';
-const HOST_PEER_ID = 'sdg_arcade_quiz_global_host_v9';
-const REST_RELAY_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019fad2b8e254248';
+const CHANNEL_NAME = 'sdg_arcade_quiz_global_v10';
+const LOCAL_STORAGE_KEY = 'sdg_arcade_quiz_global_event_v10';
+const HOST_PEER_ID = 'sdg_arcade_quiz_global_host_v10';
 
 class SyncService {
   private channel: BroadcastChannel | null = null;
   private peer: Peer | null = null;
-  private ws: WebSocket | null = null;
   private connections: Map<string, DataConnection> = new Map();
   private hostConn: DataConnection | null = null;
   private listeners: Set<(payload: SyncPayload) => void> = new Set();
   private connectionListeners: Set<(connected: boolean) => void> = new Set();
   
-  private pollInterval: ReturnType<typeof setInterval> | null = null;
   private presenceInterval: ReturnType<typeof setInterval> | null = null;
   private lastProcessedTimestamp: number = 0;
   private lastRemotePeerSeenTime: number = 0;
@@ -49,13 +46,11 @@ class SyncService {
   public initGlobalChannel(isHostView: boolean) {
     this.isHost = isHostView;
     this.initBroadcastChannel();
-    this.initWebSocket();
     this.initPeerJS(isHostView);
-    this.startHttpRelayPolling();
     this.startPresenceHeartbeat();
 
     if (!isHostView) {
-      setTimeout(() => this.publish({ event: 'REQUEST_STATE' }), 100);
+      setTimeout(() => this.publish({ event: 'REQUEST_STATE' }), 300);
     }
   }
 
@@ -92,45 +87,6 @@ class SyncService {
     }
   }
 
-  private initWebSocket() {
-    if (typeof window === 'undefined') return;
-
-    if (this.ws) {
-      try { this.ws.close(); } catch(e) {}
-      this.ws = null;
-    }
-
-    try {
-      this.ws = new WebSocket('wss://free.qrserver.com/v1/ws');
-
-      this.ws.onopen = () => {
-        console.log('[SyncService] Primary WebSocket channel open');
-        if (!this.isHost) {
-          this.publish({ event: 'REQUEST_STATE' });
-        }
-      };
-
-      this.ws.onmessage = (event: MessageEvent) => {
-        try {
-          if (typeof event.data === 'string') {
-            const payload: SyncPayload = JSON.parse(event.data);
-            if (payload && payload.event && payload.senderId !== this.clientId) {
-              this.handleIncomingPayload(payload);
-            }
-          }
-        } catch (e) {}
-      };
-
-      this.ws.onclose = () => {
-        setTimeout(() => this.initWebSocket(), 5000);
-      };
-
-      this.ws.onerror = () => {};
-    } catch (e) {
-      console.warn('[SyncService] WebSocket setup error:', e);
-    }
-  }
-
   private initPeerJS(isHostView: boolean) {
     if (typeof window === 'undefined') return;
 
@@ -141,13 +97,23 @@ class SyncService {
 
     try {
       if (isHostView) {
-        this.peer = new Peer(HOST_PEER_ID, { debug: 1 });
+        this.peer = new Peer(HOST_PEER_ID, {
+          debug: 1,
+          config: {
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:global.stun.twilio.com:3478' }
+            ]
+          }
+        });
 
         this.peer.on('open', (id) => {
           console.log('[SyncService] WebRTC Host registered:', id);
+          this.setConnectedState(true);
         });
 
         this.peer.on('connection', (conn) => {
+          console.log('[SyncService] Remote Player connected:', conn.peer);
           this.connections.set(conn.peer, conn);
           this.lastRemotePeerSeenTime = Date.now();
           this.setConnectedState(true);
@@ -155,15 +121,35 @@ class SyncService {
           conn.on('data', (data) => this.handleRawData(data));
           conn.on('close', () => this.connections.delete(conn.peer));
 
-          conn.send({ event: 'PLAYER_READY', senderId: this.clientId, timestamp: Date.now() });
+          conn.send({ event: 'HOST_HEARTBEAT', senderId: this.clientId, timestamp: Date.now() });
         });
 
         this.peer.on('error', (err) => {
-          console.warn('[SyncService] PeerJS notice:', err.type);
+          console.warn('[SyncService] PeerJS host notice:', err.type);
+          if (err.type === 'unavailable-id') {
+            setTimeout(() => {
+              if (this.isHost) {
+                this.peer = new Peer(HOST_PEER_ID + '_' + Math.floor(Math.random()*1000), { debug: 1 });
+              }
+            }, 2000);
+          }
         });
       } else {
-        this.peer = new Peer({ debug: 1 });
+        this.peer = new Peer({
+          debug: 1,
+          config: {
+            iceServers: [
+              { urls: 'stun:stun.l.google.com:19302' },
+              { urls: 'stun:global.stun.twilio.com:3478' }
+            ]
+          }
+        });
+
         this.peer.on('open', () => this.connectToGlobalHost());
+        this.peer.on('error', (err) => {
+          console.warn('[SyncService] Player peer notice:', err.type);
+          setTimeout(() => this.connectToGlobalHost(), 3000);
+        });
       }
     } catch (e) {
       console.warn('[SyncService] PeerJS setup error:', e);
@@ -187,7 +173,7 @@ class SyncService {
       conn.on('data', (data) => this.handleRawData(data));
       conn.on('close', () => {
         this.hostConn = null;
-        setTimeout(() => this.connectToGlobalHost(), 3000);
+        setTimeout(() => this.connectToGlobalHost(), 2000);
       });
     } catch (e) {
       console.warn('[SyncService] Connect host error:', e);
@@ -197,57 +183,17 @@ class SyncService {
   private startPresenceHeartbeat() {
     if (this.presenceInterval) clearInterval(this.presenceInterval);
 
-    // Heartbeat ping every 2.5 seconds
     this.presenceInterval = setInterval(() => {
       const payloadEvent = this.isHost ? 'HOST_HEARTBEAT' : 'PLAYER_HEARTBEAT';
       this.publish({ event: payloadEvent });
 
-      // Generous 12-second window prevents transient Wi-Fi latency drops
-      const isRemoteActive = (Date.now() - this.lastRemotePeerSeenTime) < 12000;
-      this.setConnectedState(isRemoteActive);
-    }, 2500);
-  }
-
-  private startHttpRelayPolling() {
-    if (this.pollInterval) clearInterval(this.pollInterval);
-
-    this.pollHttpRelay();
-
-    // Poll HTTP REST Relay every 1 second
-    this.pollInterval = setInterval(() => {
-      this.pollHttpRelay();
-    }, 1000);
-  }
-
-  private async pollHttpRelay() {
-    try {
-      const res = await fetch(REST_RELAY_URL, { cache: 'no-store' });
-      if (res.ok) {
-        const result = await res.json();
-        if (result && result.data && result.data.timestamp) {
-          const payload: SyncPayload = result.data;
-          if (this.lastProcessedTimestamp === 0 || payload.timestamp > this.lastProcessedTimestamp) {
-            if (payload.senderId !== this.clientId) {
-              this.handleIncomingPayload(payload);
-            }
-          }
-        }
+      if (!this.isHost && (!this.hostConn || !this.hostConn.open)) {
+        this.connectToGlobalHost();
       }
-    } catch (e) {
-      console.warn('[SyncService] HTTP relay poll notice:', e);
-    }
-  }
 
-  private async publishHttpRelay(payload: SyncPayload) {
-    try {
-      await fetch(REST_RELAY_URL, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: 'sdg_arcade_global_state', data: payload })
-      });
-    } catch (e) {
-      console.warn('[SyncService] HTTP relay publish notice:', e);
-    }
+      const isRemoteActive = (Date.now() - this.lastRemotePeerSeenTime) < 15000;
+      this.setConnectedState(isRemoteActive);
+    }, 2000);
   }
 
   private handleRawData(data: unknown) {
@@ -260,18 +206,12 @@ class SyncService {
   }
 
   private handleIncomingPayload(payload: SyncPayload) {
-    if (this.lastProcessedTimestamp === 0 || payload.timestamp > this.lastProcessedTimestamp) {
+    this.lastRemotePeerSeenTime = Date.now();
+    this.setConnectedState(true);
+
+    if (this.lastProcessedTimestamp === 0 || payload.timestamp >= this.lastProcessedTimestamp) {
       this.lastProcessedTimestamp = payload.timestamp;
-
-      // Mark remote peer active
-      this.lastRemotePeerSeenTime = Date.now();
-      this.setConnectedState(true);
-
       this.notifyListeners(payload);
-    } else if (payload.event === 'PLAYER_HEARTBEAT' || payload.event === 'HOST_HEARTBEAT') {
-      // Even if timestamp is equal, refresh remote peer presence timestamp!
-      this.lastRemotePeerSeenTime = Date.now();
-      this.setConnectedState(true);
     }
   }
 
@@ -284,17 +224,12 @@ class SyncService {
 
     this.lastProcessedTimestamp = fullPayload.timestamp;
 
-    // 1. BroadcastChannel (Same Device)
+    // 1. BroadcastChannel (Same Device / Dual Monitor)
     if (this.channel) {
       try { this.channel.postMessage(fullPayload); } catch (e) {}
     }
 
-    // 2. Primary WebSocket
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      try { this.ws.send(JSON.stringify(fullPayload)); } catch (e) {}
-    }
-
-    // 3. WebRTC P2P DataChannels
+    // 2. WebRTC P2P DataChannels (Cross Device)
     if (this.isHost) {
       this.connections.forEach((conn) => {
         if (conn.open) {
@@ -305,13 +240,10 @@ class SyncService {
       try { this.hostConn.send(fullPayload); } catch (e) {}
     }
 
-    // 4. LocalStorage
+    // 3. LocalStorage
     try {
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(fullPayload));
     } catch (e) {}
-
-    // 5. HTTPS REST Relay (Includes heartbeats & state changes)
-    this.publishHttpRelay(fullPayload);
   }
 
   public subscribe(callback: (payload: SyncPayload) => void): () => void {
@@ -326,15 +258,10 @@ class SyncService {
   }
 
   public close(): void {
-    if (this.pollInterval) clearInterval(this.pollInterval);
     if (this.presenceInterval) clearInterval(this.presenceInterval);
     if (this.channel) {
       this.channel.close();
       this.channel = null;
-    }
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
     }
     if (this.peer) {
       this.peer.destroy();
