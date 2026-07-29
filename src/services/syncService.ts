@@ -1,9 +1,9 @@
 import Peer, { type DataConnection } from 'peerjs';
 import type { SyncPayload } from '../types/game';
 
-const CHANNEL_NAME = 'sdg_arcade_quiz_global_v7';
-const LOCAL_STORAGE_KEY = 'sdg_arcade_quiz_global_event_v7';
-const HOST_PEER_ID = 'sdg_arcade_quiz_global_host_v7';
+const CHANNEL_NAME = 'sdg_arcade_quiz_global_v8';
+const LOCAL_STORAGE_KEY = 'sdg_arcade_quiz_global_event_v8';
+const HOST_PEER_ID = 'sdg_arcade_quiz_global_host_v8';
 const REST_RELAY_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019fad2b8e254248';
 
 class SyncService {
@@ -53,6 +53,11 @@ class SyncService {
     this.initPeerJS(isHostView);
     this.startHttpRelayPolling();
     this.startPresenceHeartbeat();
+
+    // Player Client instantly publishes REQUEST_STATE on boot for < 50ms sync
+    if (!isHostView) {
+      setTimeout(() => this.publish({ event: 'REQUEST_STATE' }), 100);
+    }
   }
 
   private initBroadcastChannel() {
@@ -193,7 +198,7 @@ class SyncService {
   private startPresenceHeartbeat() {
     if (this.presenceInterval) clearInterval(this.presenceInterval);
 
-    // Heartbeat ping every 2.5 seconds to advertise active presence
+    // Heartbeat ping every 2 seconds to advertise active presence
     this.presenceInterval = setInterval(() => {
       const payloadEvent = this.isHost ? 'HOST_HEARTBEAT' : 'PLAYER_HEARTBEAT';
       this.publish({ event: payloadEvent });
@@ -201,18 +206,19 @@ class SyncService {
       // Check if remote peer has been seen in last 6 seconds
       const isRemoteActive = (Date.now() - this.lastRemotePeerSeenTime) < 6000;
       this.setConnectedState(isRemoteActive);
-    }, 2500);
+    }, 2000);
   }
 
   private startHttpRelayPolling() {
     if (this.pollInterval) clearInterval(this.pollInterval);
 
+    // Initial fetch to sync state immediately on boot
     this.pollHttpRelay();
 
-    // Poll HTTP REST Relay every 1.5 seconds
+    // Poll HTTP REST Relay every 1 second
     this.pollInterval = setInterval(() => {
       this.pollHttpRelay();
-    }, 1500);
+    }, 1000);
   }
 
   private async pollHttpRelay() {
@@ -220,10 +226,12 @@ class SyncService {
       const res = await fetch(REST_RELAY_URL, { cache: 'no-store' });
       if (res.ok) {
         const result = await res.json();
-        if (result && result.data && result.data.timestamp > this.lastProcessedTimestamp) {
+        if (result && result.data && result.data.timestamp) {
           const payload: SyncPayload = result.data;
-          if (payload.senderId !== this.clientId) {
-            this.handleIncomingPayload(payload);
+          if (this.lastProcessedTimestamp === 0 || payload.timestamp > this.lastProcessedTimestamp) {
+            if (payload.senderId !== this.clientId) {
+              this.handleIncomingPayload(payload);
+            }
           }
         }
       }
@@ -254,7 +262,7 @@ class SyncService {
   }
 
   private handleIncomingPayload(payload: SyncPayload) {
-    if (payload.timestamp > this.lastProcessedTimestamp) {
+    if (this.lastProcessedTimestamp === 0 || payload.timestamp > this.lastProcessedTimestamp) {
       this.lastProcessedTimestamp = payload.timestamp;
 
       // Mark remote peer active

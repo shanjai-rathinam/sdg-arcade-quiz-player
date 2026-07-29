@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import type { RoleMode, ThemeMode } from '../types/game';
-import { Sun, Moon, Volume2, VolumeX, Sparkles, Wifi, WifiOff } from 'lucide-react';
+import { Sun, Moon, Volume2, VolumeX, Maximize, Minimize } from 'lucide-react';
 import { audioService } from '../services/audioService';
 import { SdgWheelLogo } from './SdgWheelLogo';
 
@@ -15,14 +15,36 @@ interface NavbarProps {
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
-  role,
   theme,
   setTheme,
   isMuted,
   setIsMuted,
-  onOpenQrModal,
-  isConnected
 }) => {
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  const toggleFullscreen = () => {
+    audioService.playClick();
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch((err) => {
+        console.warn('Fullscreen request failed:', err);
+      });
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch((err) => {
+          console.warn('Exit fullscreen failed:', err);
+        });
+      }
+    }
+  };
+
   const toggleAudio = () => {
     const nextMuted = !isMuted;
     setIsMuted(nextMuted);
@@ -46,30 +68,22 @@ export const Navbar: React.FC<NavbarProps> = ({
             </span>
             <span className="text-[10px] sm:text-xs font-extrabold text-slate-400 light:text-slate-500 flex items-center space-x-1.5 mt-0.5 uppercase tracking-wider font-heading">
               <span>UN Sustainable Development Goals</span>
-              {/* Dynamic Connection Status Indicator */}
-              <span className={`inline-flex items-center space-x-1 text-[10px] sm:text-xs font-mono font-black px-2 py-0.5 rounded-md border ${
-                isConnected 
-                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
-                  : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
-              }`}>
-                {isConnected ? (
-                  <>
-                    <Wifi className="w-3 h-3 text-emerald-400 animate-pulse" />
-                    <span>CONTROLLER CONNECTED</span>
-                  </>
-                ) : (
-                  <>
-                    <WifiOff className="w-3 h-3 text-amber-400 animate-pulse" />
-                    <span>WAITING FOR CONTROLLER...</span>
-                  </>
-                )}
-              </span>
             </span>
           </div>
         </div>
 
-        {/* Global Controls: Sound & Theme */}
+        {/* Global Controls: Fullscreen, Sound & Theme */}
         <div className="flex items-center space-x-2 sm:space-x-3">
+          {/* Fullscreen Mode Toggle */}
+          <button
+            onClick={toggleFullscreen}
+            className="flex items-center space-x-1.5 px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl bg-slate-900 light:bg-slate-100 text-slate-200 light:text-slate-800 hover:text-white light:hover:text-slate-900 border-2 border-slate-800 light:border-slate-200 font-extrabold text-xs sm:text-sm transition shadow-md transform active:scale-95"
+            title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+          >
+            {isFullscreen ? <Minimize className="w-4 h-4 text-amber-400" /> : <Maximize className="w-4 h-4 text-unblue" />}
+            <span className="hidden sm:inline font-heading uppercase">{isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}</span>
+          </button>
+
           {/* Sound Toggle */}
           <button
             onClick={toggleAudio}
