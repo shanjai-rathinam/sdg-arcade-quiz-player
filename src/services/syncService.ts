@@ -1,9 +1,9 @@
 import Peer, { type DataConnection } from 'peerjs';
 import type { SyncPayload } from '../types/game';
 
-const CHANNEL_NAME = 'sdg_arcade_quiz_global_v6';
-const LOCAL_STORAGE_KEY = 'sdg_arcade_quiz_global_event_v6';
-const HOST_PEER_ID = 'sdg_arcade_quiz_global_host_v6';
+const CHANNEL_NAME = 'sdg_arcade_quiz_global_v7';
+const LOCAL_STORAGE_KEY = 'sdg_arcade_quiz_global_event_v7';
+const HOST_PEER_ID = 'sdg_arcade_quiz_global_host_v7';
 const REST_RELAY_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019fad2b8e254248';
 
 class SyncService {
@@ -16,7 +16,9 @@ class SyncService {
   private connectionListeners: Set<(connected: boolean) => void> = new Set();
   
   private pollInterval: ReturnType<typeof setInterval> | null = null;
+  private presenceInterval: ReturnType<typeof setInterval> | null = null;
   private lastProcessedTimestamp: number = 0;
+  private lastRemotePeerSeenTime: number = 0;
 
   public clientId: string;
   public isHost: boolean = false;
@@ -50,6 +52,7 @@ class SyncService {
     this.initWebSocket();
     this.initPeerJS(isHostView);
     this.startHttpRelayPolling();
+    this.startPresenceHeartbeat();
   }
 
   private initBroadcastChannel() {
@@ -61,7 +64,6 @@ class SyncService {
         this.channel = new BroadcastChannel(CHANNEL_NAME);
         this.channel.onmessage = (event: MessageEvent<SyncPayload>) => {
           if (event.data && event.data.senderId !== this.clientId) {
-            this.setConnectedState(true);
             this.handleIncomingPayload(event.data);
           }
         };
@@ -78,7 +80,6 @@ class SyncService {
           try {
             const payload: SyncPayload = JSON.parse(event.newValue);
             if (payload.senderId !== this.clientId) {
-              this.setConnectedState(true);
               this.handleIncomingPayload(payload);
             }
           } catch (err) {}
@@ -99,8 +100,7 @@ class SyncService {
       this.ws = new WebSocket('wss://free.qrserver.com/v1/ws');
 
       this.ws.onopen = () => {
-        console.log('[SyncService] Primary WebSocket channel connected!');
-        this.setConnectedState(true);
+        console.log('[SyncService] Primary WebSocket channel open');
         if (!this.isHost) {
           this.publish({ event: 'REQUEST_STATE' });
         }
@@ -111,7 +111,6 @@ class SyncService {
           if (typeof event.data === 'string') {
             const payload: SyncPayload = JSON.parse(event.data);
             if (payload && payload.event && payload.senderId !== this.clientId) {
-              this.setConnectedState(true);
               this.handleIncomingPayload(payload);
             }
           }
@@ -142,11 +141,11 @@ class SyncService {
 
         this.peer.on('open', (id) => {
           console.log('[SyncService] WebRTC Host registered:', id);
-          this.setConnectedState(true);
         });
 
         this.peer.on('connection', (conn) => {
           this.connections.set(conn.peer, conn);
+          this.lastRemotePeerSeenTime = Date.now();
           this.setConnectedState(true);
 
           conn.on('data', (data) => this.handleRawData(data));
@@ -176,6 +175,7 @@ class SyncService {
 
       conn.on('open', () => {
         console.log('[SyncService] WebRTC P2P DataChannel connected!');
+        this.lastRemotePeerSeenTime = Date.now();
         this.setConnectedState(true);
         conn.send({ event: 'REQUEST_STATE', senderId: this.clientId, timestamp: Date.now() });
       });
@@ -190,13 +190,26 @@ class SyncService {
     }
   }
 
+  private startPresenceHeartbeat() {
+    if (this.presenceInterval) clearInterval(this.presenceInterval);
+
+    // Heartbeat ping every 2.5 seconds to advertise active presence
+    this.presenceInterval = setInterval(() => {
+      const payloadEvent = this.isHost ? 'HOST_HEARTBEAT' : 'PLAYER_HEARTBEAT';
+      this.publish({ event: payloadEvent });
+
+      // Check if remote peer has been seen in last 6 seconds
+      const isRemoteActive = (Date.now() - this.lastRemotePeerSeenTime) < 6000;
+      this.setConnectedState(isRemoteActive);
+    }, 2500);
+  }
+
   private startHttpRelayPolling() {
     if (this.pollInterval) clearInterval(this.pollInterval);
 
-    // Initial fetch to sync state immediately within 200ms
     this.pollHttpRelay();
 
-    // Poll HTTP REST Relay every 1.5 seconds (Unstoppable fallback on public Wi-Fi)
+    // Poll HTTP REST Relay every 1.5 seconds
     this.pollInterval = setInterval(() => {
       this.pollHttpRelay();
     }, 1500);
@@ -210,11 +223,8 @@ class SyncService {
         if (result && result.data && result.data.timestamp > this.lastProcessedTimestamp) {
           const payload: SyncPayload = result.data;
           if (payload.senderId !== this.clientId) {
-            this.setConnectedState(true);
             this.handleIncomingPayload(payload);
           }
-        } else if (res.ok) {
-          this.setConnectedState(true);
         }
       }
     } catch (e) {
@@ -238,7 +248,6 @@ class SyncService {
     try {
       const payload: SyncPayload = typeof data === 'string' ? JSON.parse(data) : (data as SyncPayload);
       if (payload && payload.event && payload.senderId !== this.clientId) {
-        this.setConnectedState(true);
         this.handleIncomingPayload(payload);
       }
     } catch (e) {}
@@ -247,6 +256,11 @@ class SyncService {
   private handleIncomingPayload(payload: SyncPayload) {
     if (payload.timestamp > this.lastProcessedTimestamp) {
       this.lastProcessedTimestamp = payload.timestamp;
+
+      // Mark remote peer active
+      this.lastRemotePeerSeenTime = Date.now();
+      this.setConnectedState(true);
+
       this.notifyListeners(payload);
     }
   }
@@ -286,8 +300,10 @@ class SyncService {
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(fullPayload));
     } catch (e) {}
 
-    // 5. Unstoppable HTTPS REST Relay
-    this.publishHttpRelay(fullPayload);
+    // 5. HTTPS REST Relay (Don't publish routine HEARTBEAT to HTTP to reduce rate usage, only state changes & requests)
+    if (payload.event !== 'PLAYER_HEARTBEAT' && payload.event !== 'HOST_HEARTBEAT') {
+      this.publishHttpRelay(fullPayload);
+    }
   }
 
   public subscribe(callback: (payload: SyncPayload) => void): () => void {
@@ -303,6 +319,7 @@ class SyncService {
 
   public close(): void {
     if (this.pollInterval) clearInterval(this.pollInterval);
+    if (this.presenceInterval) clearInterval(this.presenceInterval);
     if (this.channel) {
       this.channel.close();
       this.channel = null;

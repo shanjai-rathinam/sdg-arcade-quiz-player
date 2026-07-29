@@ -1,6 +1,6 @@
 import React from 'react';
 import type { RoleMode, ThemeMode } from '../types/game';
-import { Sun, Moon, Volume2, VolumeX, Sparkles, Wifi } from 'lucide-react';
+import { Sun, Moon, Volume2, VolumeX, Sparkles, Wifi, WifiOff } from 'lucide-react';
 import { audioService } from '../services/audioService';
 import { SdgWheelLogo } from './SdgWheelLogo';
 
@@ -46,10 +46,23 @@ export const Navbar: React.FC<NavbarProps> = ({
             </span>
             <span className="text-[10px] sm:text-xs font-extrabold text-slate-400 light:text-slate-500 flex items-center space-x-1.5 mt-0.5 uppercase tracking-wider font-heading">
               <span>UN Sustainable Development Goals</span>
-              {/* Connection Status Indicator */}
-              <span className="inline-flex items-center space-x-1 text-[10px] sm:text-xs text-emerald-400 font-mono">
-                <Wifi className="w-3 h-3 text-emerald-400 animate-pulse" />
-                <span className="hidden sm:inline">{isConnected ? 'LIVE SYNC' : 'CONNECTING...'}</span>
+              {/* Dynamic Connection Status Indicator */}
+              <span className={`inline-flex items-center space-x-1 text-[10px] sm:text-xs font-mono font-black px-2 py-0.5 rounded-md border ${
+                isConnected 
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
+                  : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+              }`}>
+                {isConnected ? (
+                  <>
+                    <Wifi className="w-3 h-3 text-emerald-400 animate-pulse" />
+                    <span>CONTROLLER CONNECTED</span>
+                  </>
+                ) : (
+                  <>
+                    <WifiOff className="w-3 h-3 text-amber-400 animate-pulse" />
+                    <span>WAITING FOR CONTROLLER...</span>
+                  </>
+                )}
               </span>
             </span>
           </div>
@@ -57,21 +70,6 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Global Controls: Sound & Theme */}
         <div className="flex items-center space-x-2 sm:space-x-3">
-          {/* QR Join Button for Host Controller ONLY */}
-          {role === 'CONTROLLER' && onOpenQrModal && (
-            <button
-              onClick={() => {
-                audioService.playClick();
-                onOpenQrModal();
-              }}
-              className="flex items-center space-x-1.5 px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl bg-slate-800/90 light:bg-slate-100 hover:bg-slate-700 text-slate-100 light:text-slate-900 border-2 border-slate-700 light:border-slate-300 font-extrabold text-xs shadow-md transition transform active:scale-95"
-              title="Show Player Site Link & QR"
-            >
-              <Sparkles className="w-4 h-4 text-amber-400" />
-              <span className="hidden sm:inline">Player App QR</span>
-            </button>
-          )}
-
           {/* Sound Toggle */}
           <button
             onClick={toggleAudio}
