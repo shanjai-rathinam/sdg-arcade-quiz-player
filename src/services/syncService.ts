@@ -3,15 +3,20 @@ import type { SyncPayload } from '../types/game';
 
 const CHANNEL_NAME = 'sdg_arcade_quiz_global';
 const LOCAL_STORAGE_KEY = 'sdg_arcade_quiz_global_event';
-const HOST_PEER_ID = 'sdg_arcade_quiz_global_host';
+const HOST_PEER_ID = 'sdg_arcade_quiz_global_host_v3';
+
+// High-reliability public WebSocket relay server
+const WS_RELAY_URL = 'wss://socketsbay.com/wss/v2/1/sdg_arcade_quiz_global_v3/';
 
 class SyncService {
   private channel: BroadcastChannel | null = null;
   private peer: Peer | null = null;
+  private ws: WebSocket | null = null;
   private connections: Map<string, DataConnection> = new Map();
   private hostConn: DataConnection | null = null;
   private listeners: Set<(payload: SyncPayload) => void> = new Set();
-  
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+
   public clientId: string;
   public isHost: boolean = false;
   public isConnected: boolean = false;
@@ -40,8 +45,13 @@ class SyncService {
 
   public initGlobalChannel(isHostView: boolean) {
     this.isHost = isHostView;
+    this.initBroadcastChannel();
+    this.initWebSocketRelay();
+    this.initPeerJS(isHostView);
+    this.startHeartbeat();
+  }
 
-    // 1. BroadcastChannel for same-device local tabs
+  private initBroadcastChannel() {
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
       if (this.channel) {
         try { this.channel.close(); } catch(e) {}
@@ -54,11 +64,53 @@ class SyncService {
           }
         };
       } catch (e) {
-        console.warn('BroadcastChannel initialization failed', e);
+        console.warn('BroadcastChannel failed', e);
       }
     }
+  }
 
-    // 2. WebRTC PeerJS Cloud Connection (No room codes needed)
+  private initWebSocketRelay() {
+    if (typeof window === 'undefined') return;
+
+    if (this.ws) {
+      try { this.ws.close(); } catch(e) {}
+      this.ws = null;
+    }
+
+    try {
+      this.ws = new WebSocket(WS_RELAY_URL);
+
+      this.ws.onopen = () => {
+        console.log('[SyncService] High-reliability WebSocket relay connected!');
+        this.isConnected = true;
+      };
+
+      this.ws.onmessage = (event: MessageEvent) => {
+        try {
+          if (typeof event.data === 'string') {
+            const payload: SyncPayload = JSON.parse(event.data);
+            if (payload && payload.event && payload.senderId !== this.clientId) {
+              this.notifyListeners(payload);
+            }
+          }
+        } catch (e) {}
+      };
+
+      this.ws.onclose = () => {
+        this.isConnected = false;
+        // Auto-reconnect after 2 seconds
+        setTimeout(() => this.initWebSocketRelay(), 2000);
+      };
+
+      this.ws.onerror = (err) => {
+        console.warn('[SyncService] WebSocket error, reconnecting...', err);
+      };
+    } catch (e) {
+      console.warn('[SyncService] WebSocket init error:', e);
+    }
+  }
+
+  private initPeerJS(isHostView: boolean) {
     if (typeof window === 'undefined') return;
 
     if (this.peer) {
@@ -68,49 +120,36 @@ class SyncService {
 
     try {
       if (isHostView) {
-        // Host Controller Peer
         this.peer = new Peer(HOST_PEER_ID, { debug: 1 });
 
         this.peer.on('open', (id) => {
-          console.log(`[SyncService] Global Host Controller registered: ${id}`);
+          console.log('[SyncService] Host WebRTC Peer ready:', id);
           this.isConnected = true;
         });
 
         this.peer.on('connection', (conn) => {
-          console.log('[SyncService] Remote Player connected:', conn.peer);
+          console.log('[SyncService] Player WebRTC Peer connected:', conn.peer);
           this.connections.set(conn.peer, conn);
           this.isConnected = true;
 
-          conn.on('data', (data) => {
-            this.handleIncomingData(data);
-          });
+          conn.on('data', (data) => this.handleIncomingData(data));
+          conn.on('close', () => this.connections.delete(conn.peer));
 
-          conn.on('close', () => {
-            this.connections.delete(conn.peer);
-          });
-
-          // Confirm connection
           conn.send({ event: 'PLAYER_READY', senderId: this.clientId, timestamp: Date.now() });
         });
 
         this.peer.on('error', (err) => {
-          console.warn('[SyncService] Host peer notice:', err.type, err.message);
+          console.warn('[SyncService] Host peer notice:', err.type);
         });
       } else {
-        // Player Client Peer
         this.peer = new Peer({ debug: 1 });
-
-        this.peer.on('open', (id) => {
-          console.log(`[SyncService] Player peer created (${id}), connecting to global host...`);
-          this.connectToGlobalHost();
-        });
-
+        this.peer.on('open', () => this.connectToGlobalHost());
         this.peer.on('error', (err) => {
-          console.warn('[SyncService] Player peer notice:', err.type, err.message);
+          console.warn('[SyncService] Player peer notice:', err.type);
         });
       }
     } catch (e) {
-      console.warn('[SyncService] PeerJS global init error:', e);
+      console.warn('[SyncService] PeerJS init error:', e);
     }
   }
 
@@ -122,27 +161,32 @@ class SyncService {
       this.hostConn = conn;
 
       conn.on('open', () => {
-        console.log(`[SyncService] Successfully connected to Global Host Controller!`);
+        console.log('[SyncService] WebRTC P2P Host connected!');
         this.isConnected = true;
         conn.send({ event: 'PLAYER_READY', senderId: this.clientId, timestamp: Date.now() });
       });
 
-      conn.on('data', (data) => {
-        this.handleIncomingData(data);
-      });
-
+      conn.on('data', (data) => this.handleIncomingData(data));
       conn.on('close', () => {
         this.hostConn = null;
-        this.isConnected = false;
-        setTimeout(() => this.connectToGlobalHost(), 2000);
-      });
-
-      conn.on('error', (err) => {
-        console.warn('[SyncService] Connection error:', err);
+        setTimeout(() => this.connectToGlobalHost(), 3000);
       });
     } catch (e) {
-      console.warn('[SyncService] Failed to connect to global host:', e);
+      console.warn('[SyncService] Connect host error:', e);
     }
+  }
+
+  private startHeartbeat() {
+    if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
+
+    // Heartbeat ping every 5s keeps connection alive & auto-heals dropped sockets
+    this.heartbeatInterval = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        try {
+          this.ws.send(JSON.stringify({ event: 'PING', senderId: this.clientId, timestamp: Date.now() }));
+        } catch (e) {}
+      }
+    }, 5000);
   }
 
   private handleIncomingData(data: unknown) {
@@ -163,10 +207,17 @@ class SyncService {
       senderId: this.clientId
     };
 
+    // 1. BroadcastChannel (Same Device)
     if (this.channel) {
       try { this.channel.postMessage(fullPayload); } catch (e) {}
     }
 
+    // 2. WebSocket Relay (Cross-Device Internet/WiFi)
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try { this.ws.send(JSON.stringify(fullPayload)); } catch (e) {}
+    }
+
+    // 3. WebRTC P2P DataChannel
     if (this.isHost) {
       this.connections.forEach((conn) => {
         if (conn.open) {
@@ -177,6 +228,7 @@ class SyncService {
       try { this.hostConn.send(fullPayload); } catch (e) {}
     }
 
+    // 4. LocalStorage Fallback
     try {
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(fullPayload));
     } catch (e) {}
@@ -194,9 +246,14 @@ class SyncService {
   }
 
   public close(): void {
+    if (this.heartbeatInterval) clearInterval(this.heartbeatInterval);
     if (this.channel) {
       this.channel.close();
       this.channel = null;
+    }
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
     }
     if (this.peer) {
       this.peer.destroy();

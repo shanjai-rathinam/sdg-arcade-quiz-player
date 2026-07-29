@@ -183,30 +183,28 @@ export function App() {
   }, []);
 
   return (
-    <div className={`min-h-screen flex flex-col justify-between transition-colors duration-300 ${theme === 'DARK' ? 'bg-arcadeDark text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
-      <div>
-        {/* Top Navbar */}
-        <Navbar
-          role={role}
-          theme={theme}
-          setTheme={setTheme}
-          isMuted={isMuted}
-          setIsMuted={setIsMuted}
-          isConnected={isConnected}
-        />
+    <div className={`h-[100dvh] max-h-[100dvh] w-screen overflow-hidden flex flex-col justify-between select-none transition-colors duration-300 ${theme === 'DARK' ? 'bg-arcadeDark text-slate-100' : 'bg-slate-50 text-slate-900'}`}>
+      {/* Top Navbar */}
+      <Navbar
+        role={role}
+        theme={theme}
+        setTheme={setTheme}
+        isMuted={isMuted}
+        setIsMuted={setIsMuted}
+        isConnected={isConnected}
+      />
 
-        {/* Main Container */}
-        <main className="p-4 sm:p-6 md:p-8 max-w-7xl mx-auto">
-          <PlayerView
-            playerState={playerState}
-            onNameSubmitted={handleNameSubmitted}
-            onFinishSplash={handleFinishSplash}
-            onAnswerSubmitted={handleAnswerSubmitted}
-            onNextQuestion={handleNextQuestion}
-            onQuizCompleted={handleQuizCompleted}
-          />
-        </main>
-      </div>
+      {/* Main Container - Zero Scroll iPad Viewport */}
+      <main className="flex-1 flex flex-col justify-center items-center overflow-hidden p-3 sm:p-4 max-w-7xl mx-auto w-full my-auto">
+        <PlayerView
+          playerState={playerState}
+          onNameSubmitted={handleNameSubmitted}
+          onFinishSplash={handleFinishSplash}
+          onAnswerSubmitted={handleAnswerSubmitted}
+          onNextQuestion={handleNextQuestion}
+          onQuizCompleted={handleQuizCompleted}
+        />
+      </main>
 
       {/* Institution Footer */}
       <InstitutionFooter />
