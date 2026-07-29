@@ -1,9 +1,9 @@
 import Peer, { type DataConnection } from 'peerjs';
 import type { SyncPayload } from '../types/game';
 
-const CHANNEL_NAME = 'sdg_arcade_quiz_global_v8';
-const LOCAL_STORAGE_KEY = 'sdg_arcade_quiz_global_event_v8';
-const HOST_PEER_ID = 'sdg_arcade_quiz_global_host_v8';
+const CHANNEL_NAME = 'sdg_arcade_quiz_global_v9';
+const LOCAL_STORAGE_KEY = 'sdg_arcade_quiz_global_event_v9';
+const HOST_PEER_ID = 'sdg_arcade_quiz_global_host_v9';
 const REST_RELAY_URL = 'https://api.restful-api.dev/objects/ff8081819f7e10ae019fad2b8e254248';
 
 class SyncService {
@@ -54,7 +54,6 @@ class SyncService {
     this.startHttpRelayPolling();
     this.startPresenceHeartbeat();
 
-    // Player Client instantly publishes REQUEST_STATE on boot for < 50ms sync
     if (!isHostView) {
       setTimeout(() => this.publish({ event: 'REQUEST_STATE' }), 100);
     }
@@ -198,21 +197,20 @@ class SyncService {
   private startPresenceHeartbeat() {
     if (this.presenceInterval) clearInterval(this.presenceInterval);
 
-    // Heartbeat ping every 2 seconds to advertise active presence
+    // Heartbeat ping every 2.5 seconds
     this.presenceInterval = setInterval(() => {
       const payloadEvent = this.isHost ? 'HOST_HEARTBEAT' : 'PLAYER_HEARTBEAT';
       this.publish({ event: payloadEvent });
 
-      // Check if remote peer has been seen in last 6 seconds
-      const isRemoteActive = (Date.now() - this.lastRemotePeerSeenTime) < 6000;
+      // Generous 12-second window prevents transient Wi-Fi latency drops
+      const isRemoteActive = (Date.now() - this.lastRemotePeerSeenTime) < 12000;
       this.setConnectedState(isRemoteActive);
-    }, 2000);
+    }, 2500);
   }
 
   private startHttpRelayPolling() {
     if (this.pollInterval) clearInterval(this.pollInterval);
 
-    // Initial fetch to sync state immediately on boot
     this.pollHttpRelay();
 
     // Poll HTTP REST Relay every 1 second
@@ -270,6 +268,10 @@ class SyncService {
       this.setConnectedState(true);
 
       this.notifyListeners(payload);
+    } else if (payload.event === 'PLAYER_HEARTBEAT' || payload.event === 'HOST_HEARTBEAT') {
+      // Even if timestamp is equal, refresh remote peer presence timestamp!
+      this.lastRemotePeerSeenTime = Date.now();
+      this.setConnectedState(true);
     }
   }
 
@@ -308,10 +310,8 @@ class SyncService {
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(fullPayload));
     } catch (e) {}
 
-    // 5. HTTPS REST Relay (Don't publish routine HEARTBEAT to HTTP to reduce rate usage, only state changes & requests)
-    if (payload.event !== 'PLAYER_HEARTBEAT' && payload.event !== 'HOST_HEARTBEAT') {
-      this.publishHttpRelay(fullPayload);
-    }
+    // 5. HTTPS REST Relay (Includes heartbeats & state changes)
+    this.publishHttpRelay(fullPayload);
   }
 
   public subscribe(callback: (payload: SyncPayload) => void): () => void {
