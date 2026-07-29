@@ -1,9 +1,9 @@
 import Peer, { type DataConnection } from 'peerjs';
 import type { SyncPayload } from '../types/game';
 
-const CHANNEL_NAME = 'sdg_arcade_quiz_global_v10';
-const LOCAL_STORAGE_KEY = 'sdg_arcade_quiz_global_event_v10';
-const HOST_PEER_ID = 'sdg_arcade_quiz_global_host_v10';
+const CHANNEL_NAME = 'sdg_arcade_quiz_global_v11';
+const LOCAL_STORAGE_KEY = 'sdg_arcade_quiz_global_event_v11';
+const HOST_PEER_ID = 'sdg_arcade_quiz_global_host_v11';
 
 class SyncService {
   private channel: BroadcastChannel | null = null;
@@ -108,8 +108,9 @@ class SyncService {
         });
 
         this.peer.on('open', (id) => {
-          console.log('[SyncService] WebRTC Host registered:', id);
-          this.setConnectedState(true);
+          console.log('[SyncService] Host WebRTC Peer ready:', id);
+          // Host peer ready to accept connections (Starts disconnected until a Player connects)
+          this.setConnectedState(this.connections.size > 0);
         });
 
         this.peer.on('connection', (conn) => {
@@ -119,7 +120,10 @@ class SyncService {
           this.setConnectedState(true);
 
           conn.on('data', (data) => this.handleRawData(data));
-          conn.on('close', () => this.connections.delete(conn.peer));
+          conn.on('close', () => {
+            this.connections.delete(conn.peer);
+            this.evaluatePresence();
+          });
 
           conn.send({ event: 'HOST_HEARTBEAT', senderId: this.clientId, timestamp: Date.now() });
         });
@@ -135,6 +139,7 @@ class SyncService {
           }
         });
       } else {
+        // Player Client Peer
         this.peer = new Peer({
           debug: 1,
           config: {
@@ -164,7 +169,7 @@ class SyncService {
       this.hostConn = conn;
 
       conn.on('open', () => {
-        console.log('[SyncService] WebRTC P2P DataChannel connected!');
+        console.log('[SyncService] WebRTC P2P DataChannel connected to Host!');
         this.lastRemotePeerSeenTime = Date.now();
         this.setConnectedState(true);
         conn.send({ event: 'REQUEST_STATE', senderId: this.clientId, timestamp: Date.now() });
@@ -173,6 +178,7 @@ class SyncService {
       conn.on('data', (data) => this.handleRawData(data));
       conn.on('close', () => {
         this.hostConn = null;
+        this.evaluatePresence();
         setTimeout(() => this.connectToGlobalHost(), 2000);
       });
     } catch (e) {
@@ -191,9 +197,20 @@ class SyncService {
         this.connectToGlobalHost();
       }
 
-      const isRemoteActive = (Date.now() - this.lastRemotePeerSeenTime) < 15000;
-      this.setConnectedState(isRemoteActive);
+      this.evaluatePresence();
     }, 2000);
+  }
+
+  private evaluatePresence() {
+    if (this.isHost) {
+      const hasOpenConnection = this.connections.size > 0;
+      const isRemoteSeenRecently = this.lastRemotePeerSeenTime > 0 && (Date.now() - this.lastRemotePeerSeenTime) < 6000;
+      this.setConnectedState(hasOpenConnection || isRemoteSeenRecently);
+    } else {
+      const hasHostConn = !!(this.hostConn && this.hostConn.open);
+      const isHostSeenRecently = this.lastRemotePeerSeenTime > 0 && (Date.now() - this.lastRemotePeerSeenTime) < 6000;
+      this.setConnectedState(hasHostConn || isHostSeenRecently);
+    }
   }
 
   private handleRawData(data: unknown) {
