@@ -1,13 +1,13 @@
 import Peer, { type DataConnection } from 'peerjs';
 import type { SyncPayload } from '../types/game';
 
-const CHANNEL_NAME = 'sdg_arcade_quiz_global_v4';
-const LOCAL_STORAGE_KEY = 'sdg_arcade_quiz_global_event_v4';
-const HOST_PEER_ID = 'sdg_arcade_quiz_global_host_v4';
+const CHANNEL_NAME = 'sdg_arcade_quiz_global_v5';
+const LOCAL_STORAGE_KEY = 'sdg_arcade_quiz_global_event_v5';
+const HOST_PEER_ID = 'sdg_arcade_quiz_global_host_v5';
 
-// High-Availability Public Realtime WebSockets Relay Pool
+// High-Availability Multi-Server Public WebSocket Relay Pool
 const WS_POOL_URLS = [
-  'wss://socketsbay.com/wss/v2/1/sdg_arcade_quiz_global_v4/',
+  'wss://socketsbay.com/wss/v2/1/sdg_arcade_quiz_global_v5/',
   'wss://free.pipes.piehost.com/v1/ws'
 ];
 
@@ -18,6 +18,7 @@ class SyncService {
   private connections: Map<string, DataConnection> = new Map();
   private hostConn: DataConnection | null = null;
   private listeners: Set<(payload: SyncPayload) => void> = new Set();
+  private connectionListeners: Set<(connected: boolean) => void> = new Set();
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
   public clientId: string;
@@ -27,6 +28,21 @@ class SyncService {
   constructor() {
     this.clientId = 'client_' + Math.random().toString(36).substring(2, 9);
     this.initLocalStorage();
+  }
+
+  public onConnectionChange(cb: (connected: boolean) => void): () => void {
+    this.connectionListeners.add(cb);
+    cb(this.isConnected);
+    return () => {
+      this.connectionListeners.delete(cb);
+    };
+  }
+
+  private setConnectedState(status: boolean) {
+    this.isConnected = status;
+    this.connectionListeners.forEach(cb => {
+      try { cb(status); } catch (e) {}
+    });
   }
 
   public initGlobalChannel(isHostView: boolean) {
@@ -46,6 +62,7 @@ class SyncService {
         this.channel = new BroadcastChannel(CHANNEL_NAME);
         this.channel.onmessage = (event: MessageEvent<SyncPayload>) => {
           if (event.data && event.data.senderId !== this.clientId) {
+            this.setConnectedState(true);
             this.notifyListeners(event.data);
           }
         };
@@ -62,6 +79,7 @@ class SyncService {
           try {
             const payload: SyncPayload = JSON.parse(event.newValue);
             if (payload.senderId !== this.clientId) {
+              this.setConnectedState(true);
               this.notifyListeners(payload);
             }
           } catch (err) {
@@ -85,8 +103,8 @@ class SyncService {
         const ws = new WebSocket(url);
 
         ws.onopen = () => {
-          console.log('[SyncService] WebSocket pool relay connected:', url);
-          this.isConnected = true;
+          console.log('[SyncService] Live WebSocket connected:', url);
+          this.setConnectedState(true);
           if (!this.isHost) {
             this.publish({ event: 'REQUEST_STATE' });
           }
@@ -97,6 +115,7 @@ class SyncService {
             if (typeof event.data === 'string') {
               const payload: SyncPayload = JSON.parse(event.data);
               if (payload && payload.event && payload.senderId !== this.clientId) {
+                this.setConnectedState(true);
                 this.notifyListeners(payload);
               }
             }
@@ -109,7 +128,7 @@ class SyncService {
 
         this.sockets.push(ws);
       } catch (e) {
-        console.warn('[SyncService] Failed connecting socket to pool:', url, e);
+        console.warn('[SyncService] Socket pool error:', url, e);
       }
     });
   }
@@ -127,14 +146,14 @@ class SyncService {
         this.peer = new Peer(HOST_PEER_ID, { debug: 1 });
 
         this.peer.on('open', (id) => {
-          console.log('[SyncService] WebRTC Host registered:', id);
-          this.isConnected = true;
+          console.log('[SyncService] Host WebRTC Peer ready:', id);
+          this.setConnectedState(true);
         });
 
         this.peer.on('connection', (conn) => {
           console.log('[SyncService] Remote Player peer connected:', conn.peer);
           this.connections.set(conn.peer, conn);
-          this.isConnected = true;
+          this.setConnectedState(true);
 
           conn.on('data', (data) => this.handleIncomingData(data));
           conn.on('close', () => this.connections.delete(conn.peer));
@@ -166,7 +185,7 @@ class SyncService {
 
       conn.on('open', () => {
         console.log('[SyncService] WebRTC P2P Host connected!');
-        this.isConnected = true;
+        this.setConnectedState(true);
         conn.send({ event: 'REQUEST_STATE', senderId: this.clientId, timestamp: Date.now() });
       });
 
@@ -198,6 +217,7 @@ class SyncService {
     try {
       const payload: SyncPayload = typeof data === 'string' ? JSON.parse(data) : (data as SyncPayload);
       if (payload && payload.event && payload.senderId !== this.clientId) {
+        this.setConnectedState(true);
         this.notifyListeners(payload);
       }
     } catch (e) {
@@ -265,6 +285,7 @@ class SyncService {
     this.connections.clear();
     this.hostConn = null;
     this.listeners.clear();
+    this.connectionListeners.clear();
   }
 }
 

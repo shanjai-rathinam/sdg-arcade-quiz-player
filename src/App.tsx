@@ -11,7 +11,7 @@ export function App() {
 
   const [theme, setTheme] = useState<ThemeMode>('DARK');
   const [isMuted, setIsMuted] = useState<boolean>(false);
-  const [isConnected, setIsConnected] = useState<boolean>(true);
+  const [isConnected, setIsConnected] = useState<boolean>(false);
 
   const [playerState, setPlayerState] = useState<PlayerState>({
     playerName: 'Eco Player',
@@ -38,7 +38,10 @@ export function App() {
   // Initialize Global Real-Time Player Channel Connection
   useEffect(() => {
     syncService.initGlobalChannel(false);
-    setIsConnected(syncService.isConnected);
+    const unsubConn = syncService.onConnectionChange((status) => {
+      setIsConnected(status);
+    });
+    return () => unsubConn();
   }, []);
 
   // Sync state broadcast listener

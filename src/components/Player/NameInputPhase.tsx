@@ -40,14 +40,14 @@ export const NameInputPhase: React.FC<NameInputPhaseProps> = ({
       {/* Name Form Card */}
       <form onSubmit={handleSubmit} className="glass-panel p-6 sm:p-8 rounded-3xl border-2 border-slate-700/60 light:border-slate-300 shadow-2xl text-left space-y-5">
         
-        {/* Player Nickname Field */}
+        {/* Player Nickname Field - Fixed Icon & Input Padding */}
         <div>
           <label className="block text-xs sm:text-sm font-extrabold text-slate-200 light:text-slate-700 uppercase tracking-wider mb-2 font-heading">
             Enter Arcade Player Nickname
           </label>
-          <div className="relative">
-            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
-              <User className="w-6 h-6" />
+          <div className="relative flex items-center">
+            <div className="absolute left-4 z-10 flex items-center pointer-events-none text-slate-400">
+              <User className="w-6 h-6 text-unblue" />
             </div>
             <input
               type="text"
@@ -56,7 +56,7 @@ export const NameInputPhase: React.FC<NameInputPhaseProps> = ({
               maxLength={20}
               required
               placeholder="Enter your nickname..."
-              className="w-full pl-13 pr-4 py-3.5 sm:py-4 bg-slate-950/80 light:bg-white text-white light:text-slate-900 border-2 border-slate-700 light:border-slate-300 rounded-2xl focus:ring-4 focus:ring-unblue focus:outline-none font-black text-lg sm:text-xl shadow-inner transition"
+              className="w-full pl-14 sm:pl-16 pr-5 py-3.5 sm:py-4 bg-slate-950/90 light:bg-white text-white light:text-slate-900 border-2 border-slate-700 light:border-slate-300 rounded-2xl focus:ring-4 focus:ring-unblue focus:outline-none font-black text-lg sm:text-xl shadow-inner transition"
             />
           </div>
         </div>
